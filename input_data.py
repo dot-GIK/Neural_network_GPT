@@ -1,24 +1,25 @@
-import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
 
-class InputData():
-    def __init__(self, data, is_it_file):
-        self.data = data
-        self.sequence_len = 0
-        self.is_it_file = is_it_file
+class InputData(tf.keras.layers.Layer):
+    def __init__(self, dataset: str, BATCHES: int, is_it_file: bool):
+        super().__init__()
+        if is_it_file: self.dataset = self.text_preparation_file(dataset)
+        else: self.dataset = tf.data.Dataset.from_tensor_slices([dataset])
 
-        if self.is_it_file:
-            self.data = tf.Variable(self.text_preparation_file())
-        else:
-            self.sequence_len = len(self.data.split(' '))
-            self.data = tf.Variable(self.data)
+        vectorizer = tf.keras.layers.TextVectorization()
+        vectorizer.adapt(self.dataset.batch(BATCHES))
 
-    def text_preparation_file(self):
-        with open(self.data, 'r', encoding='utf-8') as f:
-            text = f.read()
-            text = text.replace('\\ufeff', '')
-            self.sequence_len = len(text.split())
-        return text
+        model = tf.keras.models.Sequential()
+        model.add(vectorizer)
+        self.dataset = tf.Variable([model.predict(self.dataset)])
 
+    def get_dataset(self) -> tf.Variable:
+        return self.dataset
+
+    def text_preparation_file(self, dataset: str) -> tf.data.Dataset:
+        with open(dataset, 'r', encoding='utf-8') as f:
+            data = f.read()
+            data = data.replace('\\ufeff', '')
+        return tf.data.Dataset.from_tensor_slices([data])
+    
