@@ -1,6 +1,5 @@
 import tensorflow as tf
 from positional_encoding import PositionalEncoding
-from tokenizer import Tokenizer
 from keras.layers import Embedding, Dropout
 from keras.layers import Layer
 
