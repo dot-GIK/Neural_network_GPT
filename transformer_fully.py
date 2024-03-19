@@ -1,86 +1,103 @@
 import tensorflow as tf
-from errors import DatasetSizeSmallerThenBatchSize
+from errors import TheRemainderOfTheDivision, TheQuotientIsNotDividedIntoTwo
 from keras.layers import Dropout
 import numpy as np
-
+import keras
 
 
 class DataPreparation():
-    def __init__(self, dataset: str, batch_size: int, is_it_file: bool):
-        self.BATCH_SIZE = batch_size
-        MAX_TOKENS=128
-        if is_it_file: dataset = self.text_is_file(dataset)
+    def __init__(self, data: str, batch_size: int, buffer_size: int, is_it_file: bool):
+      '''
+      Creating a dataset for training the Transformer model.
+      '''
 
-        dataset = self.punctuation_marks_processing(dataset)
-        self.dataset, self.tokens_dataset, self.dataset_y_input, self.dataset_y_output = self.division_into_sentences(dataset)
-        self.vectorize = tf.keras.layers.TextVectorization(standardize=None, output_sequence_length=MAX_TOKENS)
-        self.vectorize.adapt(self.tokens_dataset)
+      self.BATCH_SIZE = batch_size
+      self.BUFFER_SIZE= buffer_size
+      
+      # Checking Batch_size and Buffer_size
+      if self.BUFFER_SIZE % self.BATCH_SIZE != 0:
+        raise TheRemainderOfTheDivision(f'Размер датасета(buffer_size) должен быть кратен размеру партии(batch_size). ERROR ваш остаток: {self.BUFFER_SIZE % self.BATCH_SIZE}')
+      elif (self.BUFFER_SIZE // self.BATCH_SIZE) % 2 != 0:
+        raise TheQuotientIsNotDividedIntoTwo(f'Размер датасета(buffer_size) должен быть кратен размеру партии(batch_size) и частное дложно быть кратно двум. ERROR ваше частное: {self.BUFFER_SIZE // self.BATCH_SIZE}') 
+      
+      # Variable data is a file
+      if is_it_file: data = self.text_is_file(data)      
 
-        self.model = tf.keras.models.Sequential()
-        self.model.add(self.vectorize)
+      data = self.punctuation_marks_processing(data)
+      data = data.split('.')
+      print(f'Количество предложений в датасете: {len(data)}')
 
-    def encoder_tks(self) -> tuple[tf.Tensor, tf.Tensor]:
-        self.dataset = tf.Variable(self.model.predict(self.dataset))
-        self.dataset_y_input = tf.Variable(self.model.predict(self.dataset_y_input))
-        self.dataset_y_output = tf.Variable(self.model.predict(self.dataset_y_output))
+      dataset = ''
+      for i in range(self.BUFFER_SIZE):
+        dataset += ' ' + data[i] + ' .'
+      
+      # Creating datasets
+      self.tokens_dataset = ['[START] ' + '[END] ' + dataset]
+      # self.dataset, self.dataset_y_input, self.dataset_y_output, size_of_largest_sent = self.creating_datasets_from_sentences(dataset)
+      self.dataset, self.dataset_y_input, self.dataset_y_output, size_of_largest_sent = self.creating_datasets_from_phrases(dataset)
 
-        if self.dataset.shape[0] < self.BATCH_SIZE*2:
-            raise DatasetSizeSmallerThenBatchSize(f'Размер датасета(dataset.shape): {self.dataset.shape} меньше, чем удвоенный размер партии(batch_size): {self.BATCH_SIZE*2}')
-        elif self.dataset.shape[0] > self.BATCH_SIZE*2:
-            self.dataset = self.dataset[:self.BATCH_SIZE*2]     
-            self.dataset_y_input = self.dataset_y_input[:self.BATCH_SIZE*2]
-            self.dataset_y_output = self.dataset_y_output[:self.BATCH_SIZE*2]
+      print(f'Размер самого большого предложения: {size_of_largest_sent}')
 
-        n = self.dataset.shape[0] - self.BATCH_SIZE
-        self.dataset = [self.dataset[i: i+self.BATCH_SIZE] for i in range(0,n,self.BATCH_SIZE)][0]
-        self.dataset_y_input = [self.dataset_y_input[i: i+self.BATCH_SIZE] for i in range(self.BATCH_SIZE, self.dataset_y_input.shape[0], self.BATCH_SIZE)][0]
-        self.dataset_y_output = [self.dataset_y_output[i: i+self.BATCH_SIZE] for i in range(self.BATCH_SIZE, self.dataset_y_output.shape[0], self.BATCH_SIZE)][0]
+      # Creating Tokenizer
+      self.vectorize = tf.keras.layers.TextVectorization(standardize=None, output_sequence_length=self.BATCH_SIZE)
+      self.vectorize.adapt(self.tokens_dataset)
 
-        max_dataset = tf.data.Dataset.from_tensor_slices((([self.dataset], [self.dataset_y_input]), [self.dataset_y_output]))
-        max_dataset = max_dataset.shuffle(20000).prefetch(buffer_size=tf.data.AUTOTUNE)
-        return max_dataset
+      self.model = tf.keras.models.Sequential()
+      self.model.add(self.vectorize)
 
-    def get_dataset_shape(self) -> tuple[int, int]:
-        return tf.Variable(self.model.predict(self.dataset).shape)
-    
-    def get_max_sentence_len(self):
-        return self.dataset
+    def encoder_tks(self) -> tf.data.Dataset:
+      '''
+      Processing datasets for further tokenization and creating final dataset.
+      '''
 
-    def division_into_sentences(self, dataset: str) -> tuple[list[list[str]], tf.Tensor]:
-        # Dividing text into sentences
-        if dataset[-1] != '.': dataset += ' .'
-        cell = 0
-        size_d = len(dataset)
-        sentences_data = [['[START] ']]
-        tokens_dataset = ['[START] ']
-        dataset_y_input = [['[START] ']]
-        dataset_y_output = [['']]
+      self.dataset = tf.Variable(self.model.predict(self.dataset))
+      self.dataset_y_input = tf.Variable(self.model.predict(self.dataset_y_input))
+      self.dataset_y_output = tf.Variable(self.model.predict(self.dataset_y_output))
 
-        for i in range(size_d): 
-            tokens_dataset[0] += dataset[i]
-            sentences_data[cell][0] += dataset[i]
-            dataset_y_input[cell][0] += dataset[i]
-            dataset_y_output[cell][0] += dataset[i]
+      print(self.dataset, '\n', self.dataset_y_input, '\n', self.dataset_y_output)
 
-            if dataset[i] == '.' and i != size_d-1:
-                dataset_y_output[cell][0] += ' [END]'
-                tokens_dataset[0] += ' [END] [START]'
-                sentences_data[cell][0] += ' [END]'
-                dataset_y_input.append(['[START] '])
-                dataset_y_output.append([''])
-                sentences_data.append(['[START] '])
-                cell+=1
+      final_dataset = tf.data.Dataset.from_tensor_slices((([self.dataset], [self.dataset_y_input]), [self.dataset_y_output]))
+      final_dataset = final_dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
+      return final_dataset
 
-            elif i == size_d-1: 
-                dataset_y_output[cell][0] += ' [END]'
-                tokens_dataset[0] += ' [END]'
-                sentences_data[cell][0] += ' [END]'
+    def get_sentence(self, sentence: str) -> np.array:
+      '''
+      Processing the entered sentence.
+      '''
 
-        return sentences_data, tokens_dataset, dataset_y_input, dataset_y_output
+      if sentence[-1] != '.': sentence += '.'
+      sentence = self.punctuation_marks_processing(sentence)
+      sentence = [['[START] ' + sentence + ' [END]']]
+      return self.model.predict(sentence)
+
+    def creating_datasets_from_sentences(self, data: str) -> tuple[list[list[str]],list[list[str]],list[list[str]], int]:
+      data = data.split('.')
+      dataset, dataset_y_input, dataset_y_output  = [], [], []
+      flag = 0
+      size_of_largest_sent = 0
+      for i in range(0, len(data)): # длинна самого большого предложения
+        if flag == 0 and i != len(data) - 1:
+           dataset.append(['[START] ' + data[i] + ' . [END]'])
+           flag = 1
+        elif i != len(data) - 1:
+          dataset_y_input.append(['[START] ' + data[i] + ' .'])
+          dataset_y_output.append([data[i] + ' . [END]'])
+          flag = 0
+
+      if len(data) > size_of_largest_sent:
+        size_of_largest_sent = len(data)
+
+      return dataset, dataset_y_input, dataset_y_output, size_of_largest_sent
+
+    def creating_datasets_from_phrases(self, data: str):
+      pass
 
 
     def punctuation_marks_processing(self, dataset: str) -> str:
-        # Highlighting all punctuation marks
+        '''
+        Selecting all punctuation marks for further text processing.
+        '''
+
         dataset_processed = ''
         size_d = len(dataset)  
         for char in range(size_d):
@@ -92,13 +109,16 @@ class DataPreparation():
             else:
                 dataset_processed += dataset[char]
         return dataset_processed
-
-
+    
     def text_is_file(self, dataset: str) -> str:
-        # Check: is a text a file?
+        '''
+        Does it check that the text is a file?
+        '''
+
         with open(dataset, 'r', encoding='utf-8') as f:
             data = f.read()
             data = data.replace('\\ufeff', '')
+        if data[-1] != '.': data += '.'
         return data
     
 
@@ -154,7 +174,6 @@ class CrossAttention(BaseAttention):
         return_attention_scores=True)
     
     self.last_attn_scores = attn_scores
-    # print(self.last_attn_scores)
     x = self.add([x, attn_output])
     x = self.layernorm(x)
     return x
@@ -360,11 +379,48 @@ def masked_accuracy(label, pred):
   mask = tf.cast(mask, dtype=tf.float32)
   return tf.reduce_sum(match)/tf.reduce_sum(mask)
 
+class Model(tf.Module):
+  def __init__(self, transformer, datasets, training_dataset, epochs):
+    super().__init__()
+    self.epochs = epochs
+    self.datasets = datasets
+    self.training_dataset = training_dataset
+    self.transformer = transformer
+
+  def __call__(self, sentence, max_length):
+    
+    start = tf.constant(self.datasets.get_token_dictionary().index('[START]'), dtype=tf.int64)[tf.newaxis]
+    end = tf.constant(self.datasets.get_token_dictionary().index('[END]'), dtype=tf.int64)[tf.newaxis]
+
+    sentence = self.datasets.get_sentence(sentence)
+    print(sentence)
+
+    output_array = tf.TensorArray(dtype=tf.int64, size=0, dynamic_size=True)
+    output_array = output_array.write(0, start)
+
+    for i in tf.range(max_length):
+      output = tf.transpose(output_array.stack())
+      predictions = self.transformer([sentence, output], training=False)
+      predictions = predictions[:, -1:, :] 
+      predicted_id = tf.argmax(predictions, axis=-1)
+      output_array = output_array.write(i+1, predicted_id[0])
+      if predicted_id == end:
+        break
+    output = tf.transpose(output_array.stack())
+    print(output)
+    result = ''
+    for i in range(output.shape[1]):
+      token = int(output[0][i])
+      result += ' ' + self.datasets.get_token_dictionary()[token]
+    return result
+    
+  
 
 def main():
-    b = DataPreparation('data.txt', 650, True)
-    # print(b.get_dataset_shape())
-    training_data = b.encoder_tks()
+    sentence = 'Правда ли, что Шаимов лох'
+    datasets = DataPreparation('dataset.txt', 60, 240, True)
+    training_data = datasets.encoder_tks()
+
 
     num_layers = 4
     d_model = 128
@@ -380,16 +436,18 @@ def main():
     d_model=d_model,
     num_heads=num_heads,
     dff=dff,
-    input_vocab_size=10000,
-    target_vocab_size=10000,
+    input_vocab_size=20000,
+    target_vocab_size=20000,
     dropout_rate=dropout_rate)
 
     transformer.compile(
     loss=masked_loss,
     optimizer=optimizer,
     metrics=[masked_accuracy])
+    transformer.fit(training_data, epochs=1000)
 
-    transformer.fit(training_data, epochs=20)
+    model = Model(transformer, datasets, training_data, 1000)
+    print(model(sentence, 30))
 
 if __name__ == '__main__':
     main()
